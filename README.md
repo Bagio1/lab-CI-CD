@@ -213,24 +213,3 @@ build → lint → test → docker-build → docker-push
 | **test** | `jest --coverage` | Test failure or coverage < 50 % |
 | **docker-build** | `docker build` tagged with `$CI_COMMIT_SHORT_SHA` | Build error |
 | **docker-push** | Push to Docker Hub (main branch + MRs only) | Auth failure |
-
-### Required GitLab CI/CD variables
-
-Set these in **Settings → CI/CD → Variables** (masked, protected):
-
-| Variable | Description |
-|----------|-------------|
-| `DOCKER_HUB_USERNAME` | Your Docker Hub username |
-| `DOCKER_HUB_TOKEN` | Docker Hub personal access token |
-
----
-
-## Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DATABASE_URL` | ✅ | – | PostgreSQL connection string |
-| `PORT` | ❌ | `3000` | HTTP port |
-| `NODE_ENV` | ❌ | `development` | `development` or `production` |
-
-See `.env.example` for a full template.
