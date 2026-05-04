@@ -1,0 +1,139 @@
+# ============================================================================
+# GitLab CI/CD pipeline – Smart Task & Deadline Manager API
+#
+# Stages (in order):
+#   build        → install deps + compile TypeScript
+#   lint         → ESLint (fails on any error)
+#   test         → Jest with coverage (fails if coverage < 50 %)
+#   docker-build → build image tagged with $CI_COMMIT_SHORT_SHA
+#   docker-push  → push image to Docker Hub (main branch + MRs only)
+#
+# Required CI/CD variables (set in GitLab → Settings → CI/CD → Variables):
+#   DOCKER_HUB_USERNAME  – your Docker Hub username
+#   DOCKER_HUB_TOKEN     – Docker Hub personal access token (not password)
+# ============================================================================
+
+stages:
+  - build
+  - lint
+  - test
+  - docker-build
+  - docker-push
+
+variables:
+  NODE_VERSION: "20"
+  # Full image name used throughout the pipeline
+  DOCKER_IMAGE: "$DOCKER_HUB_USERNAME/smart-task-api"
+
+# ---------------------------------------------------------------------------
+# Cache node_modules across jobs keyed on the lock file
+# ---------------------------------------------------------------------------
+cache:
+  key:
+    files:
+      - package-lock.json
+  paths:
+    - node_modules/
+  policy: pull-push
+
+# ============================================================================
+# Stage: build
+# ============================================================================
+build:
+  stage: build
+  image: node:20-alpine
+  script:
+    - echo "Installing dependencies..."
+    - npm ci
+    - echo "Compiling TypeScript..."
+    - npm run build
+  artifacts:
+    paths:
+      - dist/
+      - node_modules/   # pass node_modules to downstream jobs via artifact
+    expire_in: 1 hour
+
+# ============================================================================
+# Stage: lint
+# ============================================================================
+lint:
+  stage: lint
+  image: node:20-alpine
+  needs: [build]
+  script:
+    - echo "Running ESLint..."
+    - npm run lint
+  # No allow_failure – any ESLint error fails the pipeline
+
+# ============================================================================
+# Stage: test
+# ============================================================================
+test:
+  stage: test
+  image: node:20-alpine
+  needs: [build]
+  script:
+    - echo "Running Jest tests with coverage..."
+    # --ci disables interactive watch mode; --forceExit prevents hanging
+    - npm run test -- --ci --forceExit
+  # GitLab regex to extract the summary coverage percentage from Jest output
+  coverage: '/Lines\s*:\s*(\d+\.?\d*)%/'
+  artifacts:
+    when: always   # upload even on failure so failed coverage reports are visible
+    paths:
+      - coverage/
+    reports:
+      # Native GitLab coverage visualisation (diff annotations)
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+    expire_in: 7 days
+
+# ============================================================================
+# Stage: docker-build
+# ============================================================================
+docker-build:
+  stage: docker-build
+  image: docker:24.0
+  services:
+    - docker:24.0-dind
+  needs: [lint, test]
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script:
+    - docker info   # sanity-check that Docker daemon is reachable
+  script:
+    - echo "Building Docker image tagged $DOCKER_IMAGE:$CI_COMMIT_SHORT_SHA ..."
+    - docker build -t "$DOCKER_IMAGE:$CI_COMMIT_SHORT_SHA" .
+    # Save image to tarball so the push job can load it without rebuilding
+    - docker save "$DOCKER_IMAGE:$CI_COMMIT_SHORT_SHA" -o image.tar
+  artifacts:
+    paths:
+      - image.tar
+    expire_in: 1 hour
+
+# ============================================================================
+# Stage: docker-push
+# ============================================================================
+docker-push:
+  stage: docker-push
+  image: docker:24.0
+  services:
+    - docker:24.0-dind
+  needs: [docker-build]
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  # Only push on the default branch or when triggered by a merge request
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    # Authenticate using CI variables – credentials are NEVER hardcoded
+    - echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USERNAME" --password-stdin
+    # Load the image saved by the docker-build job
+    - docker load -i image.tar
+    # Push the commit-SHA tag
+    - docker push "$DOCKER_IMAGE:$CI_COMMIT_SHORT_SHA"
+    # Also tag and push :latest for convenience
+    - docker tag "$DOCKER_IMAGE:$CI_COMMIT_SHORT_SHA" "$DOCKER_IMAGE:latest"
+    - docker push "$DOCKER_IMAGE:latest"
