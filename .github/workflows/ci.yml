@@ -51,10 +51,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: |
-          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/smart-task-api"
-          TAG="${{ github.sha }}"
-          docker build -t "$IMAGE:$TAG" .
+        run: docker build -t smart-task-api:${{ github.sha }} .
 
   docker_push:
     name: Docker Push
