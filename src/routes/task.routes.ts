@@ -1,5 +1,8 @@
 import { Router } from 'express';
 import taskController from '../controllers/task.controller';
+
+// CI demo: intentional unused variable – triggers @typescript-eslint/no-unused-vars error
+const unusedDemoVar = 'this will break lint';
 import {
   createTaskValidator,
   updateTaskValidator,
